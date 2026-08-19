@@ -11,8 +11,14 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-HEADERS = ("任务", "任务摘要", "预估完成节点", "实际完成节点", "超时原因", "任务责任人")
+HEADERS = ("阶段", "任务", "任务摘要", "预估完成节点", "实际完成节点", "超时原因", "任务责任人")
 OUTPUT_NAME = "PAB产品计划表.xlsx"
+
+
+def phase_for_task(task: str) -> str:
+    if task.startswith("第二期") or task.startswith(("PAB180", "PAB220")):
+        return "第二期"
+    return "第一期"
 
 # (task, summary, planned, actual, overtime_reason, owner)
 # actual/overtime empty: source Word file has planned dates only.
@@ -404,46 +410,74 @@ def build_workbook(output_path: Path | None = None) -> Path:
 
     last_data_row = 1 + len(ROWS)
     for i, (task, summary, planned, actual, reason, owner) in enumerate(ROWS, start=2):
-        values = (task, summary, planned, actual, reason, owner)
+        values = (phase_for_task(task), task, summary, planned, actual, reason, owner)
         for col, value in enumerate(values, start=1):
             cell = ws.cell(i, col, value)
             cell.font = body_font
             cell.border = thin
-            cell.alignment = wrap if col in (1, 2, 5) else center
+            cell.alignment = wrap if col in (2, 3, 6) else center
             if i % 2 == 0:
                 cell.fill = alt_fill
-            if col in (3, 4) and value is not None:
+            if col in (4, 5) and value is not None:
                 cell.number_format = "YYYY-MM-DD"
 
-    # D > C → red fill on the actual-date cell. Extends past current rows for later fills.
-    rule_range = f"D2:D{max(last_data_row, 200)}"
+    phase_fills = {
+        "第一期": PatternFill("solid", fgColor="D6EAF8"),
+        "第二期": PatternFill("solid", fgColor="FDEBD0"),
+    }
+    phase_font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
+    phase_align = Alignment(horizontal="center", vertical="center", wrap_text=True, textRotation=0)
+
+    def _merge_phase(label: str, start: int, end: int) -> None:
+        ws.merge_cells(start_row=start, start_column=1, end_row=end, end_column=1)
+        top = ws.cell(start, 1, label)
+        top.font = phase_font
+        top.alignment = phase_align
+        top.fill = phase_fills[label]
+        for row in range(start, end + 1):
+            cell = ws.cell(row, 1)
+            cell.border = thin
+            cell.fill = phase_fills[label]
+            cell.alignment = phase_align
+            cell.font = phase_font
+
+    first_start = next(i for i, row in enumerate(ROWS, start=2) if phase_for_task(row[0]) == "第一期")
+    first_end = max(i for i, row in enumerate(ROWS, start=2) if phase_for_task(row[0]) == "第一期")
+    second_start = next(i for i, row in enumerate(ROWS, start=2) if phase_for_task(row[0]) == "第二期")
+    second_end = max(i for i, row in enumerate(ROWS, start=2) if phase_for_task(row[0]) == "第二期")
+    _merge_phase("第一期", first_start, first_end)
+    _merge_phase("第二期", second_start, second_end)
+
+    # E > D → red fill on the actual-date cell. Extends past current rows for later fills.
+    rule_range = f"E2:E{max(last_data_row, 200)}"
     ws.conditional_formatting.add(
         rule_range,
         FormulaRule(
-            formula=["AND(ISNUMBER(D2),ISNUMBER(C2),D2>C2)"],
+            formula=["AND(ISNUMBER(E2),ISNUMBER(D2),E2>D2)"],
             fill=overtime_fill,
             font=Font(name="微软雅黑", color="FFFFFF", bold=True, size=10),
         ),
     )
 
-    widths = (28, 62, 16, 16, 28, 14)
+    widths = (10, 28, 62, 16, 16, 28, 14)
     for idx, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
     ws.row_dimensions[1].height = 22
     for row in range(2, last_data_row + 1):
         ws.row_dimensions[row].height = 36
 
-    ws.freeze_panes = "A2"
-    ws.auto_filter.ref = f"A1:F{last_data_row}"
-    ws.auto_filter.add_sort_condition(f"C2:C{last_data_row}")
+    ws.freeze_panes = "B2"
+    ws.auto_filter.ref = f"A1:G{last_data_row}"
+    ws.auto_filter.add_sort_condition(f"D2:D{last_data_row}")
 
     note_row = last_data_row + 2
-    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=6)
+    ws.merge_cells(start_row=note_row, start_column=1, end_row=note_row, end_column=7)
     note = ws.cell(
         note_row,
         1,
-        "说明：数据来自《PAB产品计划表》Word原文。原文仅有预估节点，实际完成节点留空待填；"
-        "填写后若实际完成节点晚于预估完成节点，D列单元格自动红色底纹。"
+        "说明：数据来自《PAB产品计划表》Word原文。A列按第一期/第二期合并。"
+        "原文仅有预估节点，实际完成节点留空待填；"
+        "填写后若实际完成节点晚于预估完成节点，E列单元格自动红色底纹。"
         "协助人写入任务摘要；任务责任人取原文「责任人」。",
     )
     note.font = Font(name="微软雅黑", size=9, color="6B7280")
@@ -451,7 +485,7 @@ def build_workbook(output_path: Path | None = None) -> Path:
     ws.row_dimensions[note_row].height = 40
 
     date_dv = DataValidation(type="date", operator="greaterThan", formula1="DATE(2020,1,1)", allow_blank=True)
-    date_dv.add(f"C2:D{max(last_data_row, 200)}")
+    date_dv.add(f"D2:E{max(last_data_row, 200)}")
     ws.add_data_validation(date_dv)
 
     target = output_path or (_project_root() / OUTPUT_NAME)
