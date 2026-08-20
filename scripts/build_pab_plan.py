@@ -445,13 +445,31 @@ def _solid_fill(rgb: str) -> PatternFill:
     return PatternFill(start_color=color, end_color=color, fill_type="solid")
 
 
-def _bar_formula(row: int, col: int, end_col: str) -> str:
-    """Return this column's date when it falls on the bar (start through finish)."""
-    letter = get_column_letter(col)
-    return (
-        f"=IF(AND(ISNUMBER(${end_col}{row}),"
-        f"N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),{letter}$2,\"\")"
-    )
+def _col_for_day(day: date, start: date) -> int:
+    return DAY_COL_START + (day - start).days
+
+
+def _add_merged_bar(ws, row: int, start: date, finish: date, fill, value: str, font, border, align) -> None:
+    """Merge from project start through the finish date; show the completion date once."""
+    end_col = _col_for_day(finish, start)
+    start_col = DAY_COL_START
+    if end_col < start_col:
+        return
+    for col in range(start_col, end_col + 1):
+        cell = ws.cell(row, col)
+        cell.fill = fill
+        cell.border = border
+        cell.alignment = align
+        cell.font = font
+        cell.number_format = DATE_FORMAT
+    if end_col > start_col:
+        ws.merge_cells(start_row=row, start_column=start_col, end_row=row, end_column=end_col)
+    top = ws.cell(row, start_col, value)
+    top.fill = fill
+    top.border = border
+    top.alignment = align
+    top.font = font
+    top.number_format = DATE_FORMAT
 
 
 def _add_gantt_sheet(wb) -> None:
@@ -487,7 +505,7 @@ def _add_gantt_sheet(wb) -> None:
         1,
         1,
         f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天）。"
-        "色条格子显示该日日期，并从首日铺底纹到完成日。请在「时间节点计划表」填写日期。",
+        "每行从首日合并到完成日，色条内只显示最终完成日期。请在「时间节点计划表」填写日期。",
     )
     title.font = Font(name="微软雅黑", bold=True, size=11, color="1F4E78")
     title.alignment = left
@@ -534,7 +552,7 @@ def _add_gantt_sheet(wb) -> None:
         ws.column_dimensions[get_column_letter(idx)].width = width
 
     row = 3
-    for task_idx, (task, _summary, _planned, _actual, _reason, _owner) in enumerate(ROWS):
+    for task_idx, (task, _summary, planned, actual, _reason, _owner) in enumerate(ROWS):
         main_row = 2 + task_idx
         brief = brief_for_task(task)
         phase = phase_for_task(task)
@@ -554,15 +572,18 @@ def _add_gantt_sheet(wb) -> None:
                     cell.number_format = "0"
                 if row % 2 == 0:
                     cell.fill = alt_label
-            date_font = Font(name="微软雅黑", size=8, color="1F2937")
-            end_col = "D" if kind == "预估" else "E"
             for idx in range(len(days)):
-                col = DAY_COL_START + idx
-                cell = ws.cell(row, col, _bar_formula(row, col, end_col))
-                cell.border = thin
-                cell.alignment = center
-                cell.font = date_font
-                cell.number_format = DATE_FORMAT
+                ws.cell(row, DAY_COL_START + idx).border = thin
+            finish = planned if kind == "预估" else actual
+            if finish is not None:
+                fill = planned_fill if kind == "预估" else actual_fill
+                if kind == "实际" and actual is not None:
+                    if actual > planned:
+                        fill = delay_fill
+                    elif actual < planned:
+                        fill = early_fill
+                value = f"=D{row}" if kind == "预估" else f"=E{row}"
+                _add_merged_bar(ws, row, start, finish, fill, value, dark_font, thin, center)
             ws.row_dimensions[row].height = 20
             row += 1
 
@@ -589,7 +610,7 @@ def _add_gantt_sheet(wb) -> None:
     legend = ws.cell(
         legend_row,
         1,
-        "色条从项目首日铺底纹到完成日，格子里显示该日日期（yyyy-mm-dd）。"
+        "色条从项目首日合并到完成日，格内只显示最终完成日期。"
         "蓝=预估；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
     )
     legend.font = Font(name="微软雅黑", size=9, color="6B7280")

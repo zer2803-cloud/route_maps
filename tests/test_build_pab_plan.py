@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils import get_column_letter
 
 from scripts.build_pab_plan import DATE_FORMAT, HEADERS, build_workbook
 
@@ -124,19 +125,16 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     assert ws.cell(last_task_row, 4).number_format.lower() == DATE_FORMAT
     assert ws.cell(last_task_row, 5).number_format.lower() == DATE_FORMAT
     first_bar = str(ws.cell(last_task_row, 7).value)
-    last_bar = str(ws.cell(last_task_row, 6 + len(dates)).value)
-    assert first_bar.startswith("=")
-    assert '"#"' not in first_bar
-    assert "CHAR(" not in first_bar
-    assert "$D" in first_bar
-    assert "N(G$2)" in first_bar
-    assert first_bar.endswith('G$2,"")')
-    assert "$D" in last_bar
-    assert last_bar.endswith('$2,"")')
+    last_col = 6 + len(dates)
+    last_letter = get_column_letter(last_col)
+    merged = {str(range_) for range_ in ws.merged_cells.ranges}
+    assert f"G{last_task_row}:{last_letter}{last_task_row}" in merged
+    assert first_bar == f"=D{last_task_row}"
+    assert ws.cell(last_task_row, 8).value is None
     assert ws.cell(last_task_row, 7).number_format.lower() == DATE_FORMAT
-    actual_bar = str(ws.cell(last_task_row + 1, 7).value)
-    assert actual_bar.startswith("=")
-    assert "$E" in actual_bar
+    actual_row = last_task_row + 1
+    assert f"G{actual_row}:{last_letter}{actual_row}" not in merged
+    assert ws.cell(actual_row, 7).value in (None, "")
     formulas = []
     font_rgbs = []
     for cf_range in ws.conditional_formatting._cf_rules:
