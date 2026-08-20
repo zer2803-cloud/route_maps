@@ -115,11 +115,22 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
             last_task_row = row
             break
     assert last_task_row is not None
-    # Dates come from the main sheet; bars are conditional-format (auto, not hand-painted).
+    # Dates come from the main sheet; each day cell has a formula that draws the bar.
     assert "E45" in str(ws.cell(last_task_row, 4).value)
     assert "F45" in str(ws.cell(last_task_row, 5).value)
     assert ws.cell(last_task_row, 4).number_format.lower() == DATE_FORMAT
     assert ws.cell(last_task_row, 5).number_format.lower() == DATE_FORMAT
+    first_bar = str(ws.cell(last_task_row, 7).value)
+    last_bar = str(ws.cell(last_task_row, 6 + len(dates)).value)
+    assert first_bar.startswith("=")
+    assert "CHAR(9608)" in first_bar
+    assert "$D" in first_bar
+    assert "N(G$2)" in first_bar
+    assert "CHAR(9608)" in last_bar
+    assert "$D" in last_bar
+    actual_bar = str(ws.cell(last_task_row + 1, 7).value)
+    assert actual_bar.startswith("=")
+    assert "$E" in actual_bar
     formulas = []
     font_rgbs = []
     for cf_range in ws.conditional_formatting._cf_rules:
@@ -129,8 +140,8 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
             rgb = getattr(color, "rgb", None) if color is not None else None
             if rgb:
                 font_rgbs.append(str(rgb).upper())
-    assert any("预估" in formula and "$D3" in formula and "G$2<=$D3" in formula for formula in formulas)
-    assert any("实际" in formula and "$E3" in formula and "G$2<=$E3" in formula for formula in formulas)
+    assert any('G3<>""' in formula and "预估" in formula for formula in formulas)
+    assert any('G3<>""' in formula and "实际" in formula for formula in formulas)
     assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
     assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
 

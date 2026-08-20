@@ -440,8 +440,17 @@ def _main_ref(cell: str) -> str:
     return f"'时间节点计划表'!{cell}"
 
 
+def _bar_formula(row: int, col: int, end_col: str) -> str:
+    """Show a block if this calendar day is on or before the finish date."""
+    letter = get_column_letter(col)
+    return (
+        f'=IF(AND(ISNUMBER(${end_col}{row}),'
+        f"N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),CHAR(9608),\"\")"
+    )
+
+
 def _add_gantt_sheet(wb) -> None:
-    """Calendar-day Gantt; bar color/length follow date cells via conditional formatting."""
+    """Calendar-day Gantt; each day cell formula draws the bar so it shows in WPS/Excel."""
     ws = wb.create_sheet("甘特图")
     days = _calendar_days()
     start, end = days[0], days[-1]
@@ -477,7 +486,7 @@ def _add_gantt_sheet(wb) -> None:
         1,
         1,
         f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天）。"
-        "色条由条件格式自动生成：请在「时间节点计划表」填写预估/实际日期，无需手工涂色。",
+        "色条由单元格公式生成：在「时间节点计划表」填写预估/实际日期后自动出现，无需手工涂色。",
     )
     title.font = Font(name="微软雅黑", bold=True, size=11, color="1F4E78")
     title.alignment = left
@@ -512,7 +521,7 @@ def _add_gantt_sheet(wb) -> None:
     for idx, day in enumerate(days):
         col = DAY_COL_START + idx
         cell = ws.cell(2, col, day)
-        cell.number_format = "D"
+        cell.number_format = "d"
         cell.font = Font(name="微软雅黑", size=7, color="FFFFFF" if day.weekday() < 5 else "FDE68A")
         cell.fill = header_fill if day.weekday() < 5 else PatternFill("solid", fgColor="334155")
         cell.alignment = center
@@ -544,16 +553,23 @@ def _add_gantt_sheet(wb) -> None:
                     cell.number_format = "0"
                 if row % 2 == 0:
                     cell.fill = alt_label
+            planned_font = Font(name="微软雅黑", size=10, color=planned_bar, bold=True)
+            actual_font = Font(name="微软雅黑", size=10, color=actual_bar, bold=True)
+            end_col = "D" if kind == "预估" else "E"
             for idx in range(len(days)):
-                ws.cell(row, DAY_COL_START + idx).border = thin
+                col = DAY_COL_START + idx
+                cell = ws.cell(row, col, _bar_formula(row, col, end_col))
+                cell.border = thin
+                cell.alignment = center
+                cell.font = planned_font if kind == "预估" else actual_font
             ws.row_dimensions[row].height = 18
             row += 1
 
     bar_range = f"G3:{last_col_letter}{last_gantt_row}"
-    planned_formula = 'AND($A3="预估",ISNUMBER($D3),G$2>=$G$2,G$2<=$D3)'
-    ontime_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3=$D3)'
-    delay_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3>$D3)'
-    early_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3<$D3)'
+    planned_formula = 'AND($A3="预估",G3<>"")'
+    ontime_formula = 'AND($A3="实际",G3<>"",$E3=$D3)'
+    delay_formula = 'AND($A3="实际",G3<>"",$E3>$D3)'
+    early_formula = 'AND($A3="实际",G3<>"",$E3<$D3)'
     ws.conditional_formatting.add(bar_range, FormulaRule(formula=[planned_formula], fill=planned_fill))
     ws.conditional_formatting.add(bar_range, FormulaRule(formula=[ontime_formula], fill=actual_fill))
     ws.conditional_formatting.add(bar_range, FormulaRule(formula=[delay_formula], fill=delay_fill))
@@ -607,7 +623,7 @@ def _add_gantt_sheet(wb) -> None:
     legend = ws.cell(
         legend_row,
         1,
-        "用法：在主表填写日期即可，本表色条自动变长/变色，不要手工涂格子。"
+        "用法：在主表填写日期即可，本表色条由公式自动画出，不要手工涂格子。"
         "蓝条=预估（项目首日→预估完成日）；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
     )
     legend.font = Font(name="微软雅黑", size=9, color="6B7280")
@@ -626,7 +642,7 @@ def _add_gantt_sheet(wb) -> None:
         cell.alignment = center
 
     ws.freeze_panes = "G3"
-    ws.sheet_view.showGridLines = False
+    ws.sheet_view.showGridLines = True
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToPage = False
     ws.page_setup.paperSize = ws.PAPERSIZE_A3
