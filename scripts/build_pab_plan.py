@@ -422,6 +422,7 @@ def _thin_border() -> Border:
 
 
 DAY_COL_START = 7  # Gantt calendar days begin at column G.
+DATE_FORMAT = "yyyy-mm-dd"
 
 
 def _calendar_range() -> tuple[date, date]:
@@ -458,12 +459,18 @@ def _add_gantt_sheet(wb) -> None:
     delay_bar = "DC2626"
     early_bar = "16A34A"
     alt_label = PatternFill("solid", fgColor="F8FAFC")
-    body_font = Font(name="微软雅黑", size=9)
+    body_font = Font(name="微软雅黑", size=9, color="1F2937")
     planned_fill = PatternFill("solid", fgColor=planned_bar)
     actual_fill = PatternFill("solid", fgColor=actual_bar)
     delay_fill = PatternFill("solid", fgColor=delay_bar)
     early_fill = PatternFill("solid", fgColor=early_bar)
-    white_font = Font(name="微软雅黑", color="FFFFFF", bold=True, size=9)
+    planned_cell_fill = PatternFill("solid", fgColor="D6EAF8")
+    delay_cell_fill = PatternFill("solid", fgColor="FECACA")
+    early_cell_fill = PatternFill("solid", fgColor="BBF7D0")
+    ontime_cell_fill = PatternFill("solid", fgColor="FDE68A")
+    dark_font = Font(name="微软雅黑", size=9, color="1F2937")
+    delay_font = Font(name="微软雅黑", size=9, color="991B1B", bold=True)
+    early_font = Font(name="微软雅黑", size=9, color="14532D")
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
     title = ws.cell(
@@ -513,7 +520,7 @@ def _add_gantt_sheet(wb) -> None:
         ws.column_dimensions[get_column_letter(col)].width = 3.0
     ws.row_dimensions[2].height = 18
 
-    for idx, width in enumerate((8, 8, 22, 12, 12, 10), start=1):
+    for idx, width in enumerate((8, 8, 22, 14, 14, 10), start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 
     row = 3
@@ -532,7 +539,7 @@ def _add_gantt_sheet(wb) -> None:
                 cell.border = thin
                 cell.alignment = left if col == 3 else center
                 if col in (4, 5):
-                    cell.number_format = "YYYY-MM-DD"
+                    cell.number_format = DATE_FORMAT
                 if col == 6:
                     cell.number_format = "0"
                 if row % 2 == 0:
@@ -552,46 +559,47 @@ def _add_gantt_sheet(wb) -> None:
     ws.conditional_formatting.add(bar_range, FormulaRule(formula=[delay_formula], fill=delay_fill))
     ws.conditional_formatting.add(bar_range, FormulaRule(formula=[early_formula], fill=early_fill))
 
+    # Date/label cells keep dark text; only light fills (never white font).
     type_range = f"A3:A{last_gantt_row}"
     ws.conditional_formatting.add(
         type_range,
-        FormulaRule(formula=['AND($A3="预估",ISNUMBER($D3))'], fill=planned_fill, font=white_font),
+        FormulaRule(formula=['AND($A3="预估",ISNUMBER($D3))'], fill=planned_cell_fill, font=dark_font),
     )
     ws.conditional_formatting.add(
         type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3>$D3)'], fill=delay_fill, font=white_font),
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3>$D3)'], fill=delay_cell_fill, font=delay_font),
     )
     ws.conditional_formatting.add(
         type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3<$D3)'], fill=early_fill, font=white_font),
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3<$D3)'], fill=early_cell_fill, font=early_font),
     )
     ws.conditional_formatting.add(
         type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3=$D3)'], fill=actual_fill, font=white_font),
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3=$D3)'], fill=ontime_cell_fill, font=dark_font),
     )
     ws.conditional_formatting.add(
         f"D3:D{last_gantt_row}",
-        FormulaRule(formula=["ISNUMBER(D3)"], fill=planned_fill, font=white_font),
+        FormulaRule(formula=["ISNUMBER(D3)"], fill=planned_cell_fill, font=dark_font),
     )
     ws.conditional_formatting.add(
         f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3>D3)"], fill=delay_fill, font=white_font),
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3>D3)"], fill=delay_cell_fill, font=delay_font),
     )
     ws.conditional_formatting.add(
         f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3<D3)"], fill=early_fill, font=white_font),
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3<D3)"], fill=early_cell_fill, font=early_font),
     )
     ws.conditional_formatting.add(
         f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3=D3)"], fill=actual_fill, font=white_font),
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3=D3)"], fill=ontime_cell_fill, font=dark_font),
     )
     ws.conditional_formatting.add(
         f"F3:F{last_gantt_row}",
-        FormulaRule(formula=['AND(ISNUMBER(F3),F3>0)'], fill=delay_fill, font=white_font),
+        FormulaRule(formula=["AND(ISNUMBER(F3),F3>0)"], fill=delay_cell_fill, font=delay_font),
     )
     ws.conditional_formatting.add(
         f"F3:F{last_gantt_row}",
-        FormulaRule(formula=['AND(ISNUMBER(F3),F3<0)'], fill=early_fill, font=Font(name="微软雅黑", color="14532D", size=9)),
+        FormulaRule(formula=["AND(ISNUMBER(F3),F3<0)"], fill=early_cell_fill, font=early_font),
     )
 
     legend_row = last_gantt_row + 2
@@ -666,8 +674,12 @@ def build_workbook(output_path: Path | None = None) -> Path:
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     thin = _thin_border()
     alt_fill = PatternFill("solid", fgColor="F3F7FA")
-    overtime_fill = PatternFill("solid", fgColor="FF0000")
-    early_fill = PatternFill("solid", fgColor="86EFAC")
+    overtime_fill = PatternFill("solid", fgColor="FECACA")
+    early_fill = PatternFill("solid", fgColor="BBF7D0")
+    planned_cell_fill = PatternFill("solid", fgColor="D6EAF8")
+    dark_font = Font(name="微软雅黑", color="1F2937", size=10)
+    overtime_font = Font(name="微软雅黑", color="991B1B", bold=True, size=10)
+    early_font = Font(name="微软雅黑", color="14532D", size=10)
     group_fill = PatternFill("solid", fgColor="E2E8F0")
     group_font = Font(name="微软雅黑", bold=True, size=10, color="1F4E78")
 
@@ -700,8 +712,8 @@ def build_workbook(output_path: Path | None = None) -> Path:
             cell.alignment = wrap if col in (3, 4, 7) else center
             if i % 2 == 0 and col not in (1, 2):
                 cell.fill = alt_fill
-            if col in (5, 6) and isinstance(value, date):
-                cell.number_format = "YYYY-MM-DD"
+            if col in (5, 6):
+                cell.number_format = DATE_FORMAT
             if col == 9:
                 cell.number_format = "0"
 
@@ -727,32 +739,28 @@ def build_workbook(output_path: Path | None = None) -> Path:
         FormulaRule(
             formula=["AND(ISNUMBER(F2),ISNUMBER(E2),F2>E2)"],
             fill=overtime_fill,
-            font=Font(name="微软雅黑", color="FFFFFF", bold=True, size=10),
+            font=overtime_font,
         ),
     )
     ws.conditional_formatting.add(
         f"E2:E{last_data_row}",
-        FormulaRule(
-            formula=["ISNUMBER(E2)"],
-            fill=PatternFill("solid", fgColor="2F80ED"),
-            font=Font(name="微软雅黑", color="FFFFFF", size=10),
-        ),
+        FormulaRule(formula=["ISNUMBER(E2)"], fill=planned_cell_fill, font=dark_font),
     )
     ws.conditional_formatting.add(
         f"F2:F{max(last_data_row, 200)}",
         FormulaRule(
             formula=["AND(ISNUMBER(F2),ISNUMBER(E2),F2<=E2)"],
             fill=early_fill,
-            font=Font(name="微软雅黑", color="14532D", size=10),
+            font=early_font,
         ),
     )
     ws.conditional_formatting.add(
         f"I2:I{last_data_row}",
-        FormulaRule(formula=['AND(ISNUMBER(I2),I2>0)'], fill=overtime_fill, font=Font(name="微软雅黑", color="FFFFFF", size=10)),
+        FormulaRule(formula=["AND(ISNUMBER(I2),I2>0)"], fill=overtime_fill, font=overtime_font),
     )
     ws.conditional_formatting.add(
         f"I2:I{last_data_row}",
-        FormulaRule(formula=['AND(ISNUMBER(I2),I2<0)'], fill=early_fill, font=Font(name="微软雅黑", color="14532D", size=10)),
+        FormulaRule(formula=["AND(ISNUMBER(I2),I2<0)"], fill=early_fill, font=early_font),
     )
 
     widths = (10, 12, 24, 62, 16, 16, 16, 12, 12)
@@ -761,6 +769,9 @@ def build_workbook(output_path: Path | None = None) -> Path:
     ws.row_dimensions[1].height = 22
     for row in range(2, last_data_row + 1):
         ws.row_dimensions[row].height = 32
+    for row in range(2, max(last_data_row, 200) + 1):
+        ws.cell(row, 5).number_format = DATE_FORMAT
+        ws.cell(row, 6).number_format = DATE_FORMAT
 
     ws.freeze_panes = "C2"
     ws.auto_filter.ref = f"A1:I{last_data_row}"

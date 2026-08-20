@@ -7,7 +7,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from scripts.build_pab_plan import HEADERS, build_workbook
+from scripts.build_pab_plan import DATE_FORMAT, HEADERS, build_workbook
 
 
 def test_headers_and_overdue_rule(tmp_path: Path) -> None:
@@ -35,16 +35,25 @@ def test_headers_and_overdue_rule(tmp_path: Path) -> None:
     assert "协助人：吴晨阳" in ws.cell(row, 4).value
     assert "待填" in str(ws.cell(row, 9).value)
 
+    assert ws.cell(row, 5).number_format.lower() == DATE_FORMAT
+    assert ws.cell(row, 6).number_format.lower() == DATE_FORMAT
+
     row_180 = tasks["PAB180·零件到位"]
     assert ws.cell(row_180, 5).value.date() == date(2026, 10, 15)
     assert "国庆假期" in ws.cell(row_180, 4).value
 
     formulas = []
+    font_rgbs = []
     for cf_range in ws.conditional_formatting._cf_rules:
         for rule in ws.conditional_formatting._cf_rules[cf_range]:
             formulas.extend(rule.formula)
+            color = getattr(getattr(getattr(rule, "dxf", None), "font", None), "color", None)
+            rgb = getattr(color, "rgb", None) if color is not None else None
+            if rgb:
+                font_rgbs.append(str(rgb).upper())
     assert any("F2>E2" in formula for formula in formulas)
     assert any("ISNUMBER(E2)" in formula for formula in formulas)
+    assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
 
 
 def test_phase_column_is_merged(tmp_path: Path) -> None:
@@ -109,12 +118,20 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     # Dates come from the main sheet; bars are conditional-format (auto, not hand-painted).
     assert "E45" in str(ws.cell(last_task_row, 4).value)
     assert "F45" in str(ws.cell(last_task_row, 5).value)
+    assert ws.cell(last_task_row, 4).number_format.lower() == DATE_FORMAT
+    assert ws.cell(last_task_row, 5).number_format.lower() == DATE_FORMAT
     formulas = []
+    font_rgbs = []
     for cf_range in ws.conditional_formatting._cf_rules:
         for rule in ws.conditional_formatting._cf_rules[cf_range]:
             formulas.extend(rule.formula)
+            color = getattr(getattr(getattr(rule, "dxf", None), "font", None), "color", None)
+            rgb = getattr(color, "rgb", None) if color is not None else None
+            if rgb:
+                font_rgbs.append(str(rgb).upper())
     assert any("预估" in formula and "$D3" in formula and "G$2<=$D3" in formula for formula in formulas)
     assert any("实际" in formula and "$E3" in formula and "G$2<=$E3" in formula for formula in formulas)
+    assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
     assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
 
 
