@@ -117,7 +117,10 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     assert last_task_row is not None
     # Dates come from the main sheet; each day cell has a formula that draws the bar.
     assert "E45" in str(ws.cell(last_task_row, 4).value)
+    assert '=""' not in str(ws.cell(last_task_row, 4).value)
+    assert str(ws.cell(last_task_row, 4).value).startswith("=")
     assert "F45" in str(ws.cell(last_task_row, 5).value)
+    assert "COUNT(" in str(ws.cell(last_task_row, 5).value)
     assert ws.cell(last_task_row, 4).number_format.lower() == DATE_FORMAT
     assert ws.cell(last_task_row, 5).number_format.lower() == DATE_FORMAT
     first_bar = str(ws.cell(last_task_row, 7).value)

@@ -478,10 +478,6 @@ def _add_gantt_sheet(wb) -> None:
     actual_fill = _solid_fill("F8CBAD")
     delay_fill = _solid_fill("F4A6A6")
     early_fill = _solid_fill("A9D08E")
-    planned_cell_fill = _solid_fill("D6EAF8")
-    delay_cell_fill = _solid_fill("FECACA")
-    early_cell_fill = _solid_fill("BBF7D0")
-    ontime_cell_fill = _solid_fill("FDE68A")
     dark_font = Font(name="微软雅黑", size=9, color="1F2937")
     delay_font = Font(name="微软雅黑", size=9, color="991B1B", bold=True)
     early_font = Font(name="微软雅黑", size=9, color="14532D")
@@ -542,8 +538,8 @@ def _add_gantt_sheet(wb) -> None:
         main_row = 2 + task_idx
         brief = brief_for_task(task)
         phase = phase_for_task(task)
-        planned_ref = f'=IF({_main_ref(f"E{main_row}")}="","",{_main_ref(f"E{main_row}")})'
-        actual_ref = f'=IF({_main_ref(f"F{main_row}")}="","",{_main_ref(f"F{main_row}")})'
+        planned_ref = f"={_main_ref(f'E{main_row}')}"
+        actual_ref = f"=IF(COUNT({_main_ref(f'F{main_row}')}),{_main_ref(f'F{main_row}')},\"\")"
         for kind in ("预估", "实际"):
             offset_formula = f'=IF(OR(D{row}="",E{row}=""),"待填",E{row}-D{row})' if kind == "实际" else ""
             values = (kind, phase, brief, planned_ref, actual_ref, offset_formula)
@@ -586,49 +582,6 @@ def _add_gantt_sheet(wb) -> None:
     )
     ws.conditional_formatting.add(
         bar_range, FormulaRule(formula=[early_formula], fill=early_fill, font=early_font)
-    )
-
-    # Date/label cells keep dark text; only light fills (never white font).
-    type_range = f"A3:A{last_gantt_row}"
-    ws.conditional_formatting.add(
-        type_range,
-        FormulaRule(formula=['AND($A3="预估",ISNUMBER($D3))'], fill=planned_cell_fill, font=dark_font),
-    )
-    ws.conditional_formatting.add(
-        type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3>$D3)'], fill=delay_cell_fill, font=delay_font),
-    )
-    ws.conditional_formatting.add(
-        type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3<$D3)'], fill=early_cell_fill, font=early_font),
-    )
-    ws.conditional_formatting.add(
-        type_range,
-        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3=$D3)'], fill=ontime_cell_fill, font=dark_font),
-    )
-    ws.conditional_formatting.add(
-        f"D3:D{last_gantt_row}",
-        FormulaRule(formula=["ISNUMBER(D3)"], fill=planned_cell_fill, font=dark_font),
-    )
-    ws.conditional_formatting.add(
-        f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3>D3)"], fill=delay_cell_fill, font=delay_font),
-    )
-    ws.conditional_formatting.add(
-        f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3<D3)"], fill=early_cell_fill, font=early_font),
-    )
-    ws.conditional_formatting.add(
-        f"E3:E{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(E3),E3=D3)"], fill=ontime_cell_fill, font=dark_font),
-    )
-    ws.conditional_formatting.add(
-        f"F3:F{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(F3),F3>0)"], fill=delay_cell_fill, font=delay_font),
-    )
-    ws.conditional_formatting.add(
-        f"F3:F{last_gantt_row}",
-        FormulaRule(formula=["AND(ISNUMBER(F3),F3<0)"], fill=early_cell_fill, font=early_font),
     )
 
     legend_row = last_gantt_row + 2
