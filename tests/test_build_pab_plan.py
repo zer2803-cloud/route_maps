@@ -80,27 +80,44 @@ def _cell_date(value):
     return None
 
 
-def test_timeline_is_on_main_sheet_below_table(tmp_path: Path) -> None:
-    ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
-    below = list(ws.iter_rows(min_row=47, max_row=120, max_col=9))
-    titles = [str(c.value) for row in below for c in row if c.value]
-    assert any("目标时间轴" in t for t in titles)
-    assert any("实际时间轴" in t for t in titles)
-    assert any(c.value == "▶" for row in below for c in row)
-    assert not ws._charts, "do not use the broken scatter chart"
-
-
-def test_timeline_segments_are_chronological_unique_dates(tmp_path: Path) -> None:
-    ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
+def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
+    wb = load_workbook(build_workbook(tmp_path / "plan.xlsx"))
+    assert "甘特图" in wb.sheetnames
+    ws = wb["甘特图"]
+    # Header row 2 contains consecutive calendar dates.
+    start = _cell_date(ws.cell(2, 7).value)
+    assert start == date(2026, 8, 24)
     dates = []
-    for row in ws.iter_rows(min_row=47, max_row=90, min_col=1, max_col=9):
-        row_dates = [d for d in (_cell_date(c.value) for c in row) if d]
-        if len(row_dates) >= 3:
-            dates.extend(row_dates)
+    col = 7
+    while True:
+        d = _cell_date(ws.cell(2, col).value)
+        if d is None:
             break
-    assert dates, "timeline date row should sit below the task table"
-    assert dates[0] == date(2026, 8, 24)
-    assert dates == sorted(dates)
-    assert len(dates) == len(set(dates))
-    assert len(dates) <= 9
+        dates.append(d)
+        col += 1
+    assert dates[-1] == date(2026, 10, 23)
+    assert dates == [start + __import__("datetime").timedelta(days=i) for i in range(len(dates))]
+
+    # Bar length for the last task equals calendar span from project start.
+    last_task_row = None
+    for row in range(3, ws.max_row + 1):
+        if ws.cell(row, 3).value == "PAB220·双级样机" and ws.cell(row, 1).value == "预估":
+            last_task_row = row
+            break
+    assert last_task_row is not None
+    filled = 0
+    for c in range(7, 7 + len(dates)):
+        fill = ws.cell(last_task_row, c).fill
+        if fill and fill.fgColor and fill.fgColor.rgb not in ("00000000", "0"):
+            if fill.fill_type:
+                filled += 1
+    assert filled == (date(2026, 10, 23) - date(2026, 8, 24)).days + 1
+
+
+def test_main_sheet_points_to_gantt(tmp_path: Path) -> None:
+    ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
+    note = " ".join(str(c.value) for row in ws.iter_rows(min_row=46, max_row=50) for c in row if c.value)
+    assert "甘特图" in note
+    assert not any(c.value == "▶" for row in ws.iter_rows(min_row=47, max_row=90) for c in row)
+
 

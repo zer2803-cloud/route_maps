@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -421,10 +421,18 @@ def _thin_border() -> Border:
     )
 
 
-def _unique_dates() -> list[date]:
+DAY_COL_START = 7  # Gantt calendar days begin at column G.
+
+
+def _calendar_range() -> tuple[date, date]:
     dates = [row[2] for row in ROWS]
     dates.extend(row[3] for row in ROWS if row[3] is not None)
-    return sorted(set(dates))
+    return min(dates), max(dates)
+
+
+def _calendar_days() -> list[date]:
+    start, end = _calendar_range()
+    return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
 
 def _offset_label(planned: date, actual: date | None) -> str:
@@ -438,121 +446,179 @@ def _offset_label(planned: date, actual: date | None) -> str:
     return "0天"
 
 
-def _points_by_date(*, use_actual: bool) -> dict[date, list[tuple[str, str]]]:
-    grouped: dict[date, list[tuple[str, str]]] = {}
-    for task, _summary, planned, actual, _reason, _owner in ROWS:
-        when = actual if use_actual else planned
-        if when is None:
-            continue
-        grouped.setdefault(when, []).append((brief_for_task(task), _offset_label(planned, actual)))
-    return grouped
+def _fill_bar(ws, row: int, start: date, end: date, color: str) -> None:
+    """Paint one cell per calendar day from project start through `end` (inclusive)."""
+    fill = PatternFill("solid", fgColor=color)
+    last_idx = (end - start).days
+    for idx in range(last_idx + 1):
+        cell = ws.cell(row, DAY_COL_START + idx)
+        cell.fill = fill
+    finish = ws.cell(row, DAY_COL_START + last_idx, end.day)
+    finish.font = Font(name="微软雅黑", size=7, color="FFFFFF", bold=True)
+    finish.alignment = Alignment(horizontal="center", vertical="center")
+    finish.number_format = "0"
 
 
-def _draw_segment_axis(
-    ws,
-    start_row: int,
-    *,
-    title: str,
-    subtitle: str,
-    dates: list[date],
-    points: dict[date, list[tuple[str, str]]],
-    show_offset: bool,
-    bar_color: str,
-) -> int:
-    """Draw a wrapping left-to-right axis using columns A–I (one unique date per cell)."""
-    cols = 9
-    title_font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
-    sub_font = Font(name="微软雅黑", size=9, color="6B7280")
-    label_font = Font(name="微软雅黑", size=8, color="1F2937")
-    date_font = Font(name="微软雅黑", size=8, color="334155")
-    bar_fill = PatternFill("solid", fgColor=bar_color)
+def _add_gantt_sheet(wb) -> None:
+    """Calendar-day Gantt: equal-width columns, bar length = days from project start to finish."""
+    ws = wb.create_sheet("甘特图")
+    days = _calendar_days()
+    start, end = days[0], days[-1]
+    last_day_col = DAY_COL_START + len(days) - 1
+    thin = _thin_border()
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(name="微软雅黑", bold=True, color="FFFFFF", size=10)
+    month_fill = PatternFill("solid", fgColor="2E75B6")
+    planned_bar = "5B8BD5"
+    actual_bar = "F59E0B"
+    delay_bar = "DC2626"
+    early_bar = "16A34A"
+    pending_fill = PatternFill("solid", fgColor="F8FAFC")
+    alt_label = PatternFill("solid", fgColor="F8FAFC")
+    body_font = Font(name="微软雅黑", size=9)
+    small = Font(name="微软雅黑", size=8, color="334155")
 
-    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=cols)
-    ws.cell(start_row, 1, title).font = title_font
-    ws.merge_cells(start_row=start_row + 1, start_column=1, end_row=start_row + 1, end_column=cols)
-    ws.cell(start_row + 1, 1, subtitle).font = sub_font
-    ws.cell(start_row + 1, 1).alignment = Alignment(wrap_text=True, vertical="center")
-    ws.row_dimensions[start_row + 1].height = 28
-
-    row = start_row + 2
-    total = len(dates)
-    for chunk_start in range(0, total, cols):
-        chunk = dates[chunk_start : chunk_start + cols]
-        last_chunk = chunk_start + cols >= total
-        stack = max((len(points.get(day, [])) for day in chunk), default=1)
-        label_top = row
-        for offset, day in enumerate(chunk):
-            col = 1 + offset
-            for idx, (name, _off) in enumerate(points.get(day, [])):
-                cell = ws.cell(label_top + idx, col, name)
-                cell.font = label_font
-                cell.alignment = Alignment(horizontal="center", vertical="bottom", wrap_text=True)
-        tick_row = label_top + stack
-        axis_row = tick_row + 1
-        date_row = axis_row + 1
-        offset_row = date_row + 1 if show_offset else date_row
-        for offset, day in enumerate(chunk):
-            col = 1 + offset
-            tick = ws.cell(tick_row, col, "▼" if day in points else "·")
-            tick.font = Font(name="微软雅黑", size=9, color=bar_color)
-            tick.alignment = center
-            last_cell = last_chunk and offset == len(chunk) - 1
-            bar = ws.cell(axis_row, col, "▶" if last_cell else "━")
-            bar.fill = bar_fill
-            bar.font = Font(name="微软雅黑", color="FFFFFF", bold=True, size=11)
-            bar.alignment = center
-            date_cell = ws.cell(date_row, col, day)
-            date_cell.number_format = "YYYY-MM-DD"
-            date_cell.font = date_font
-            date_cell.alignment = center
-            if show_offset:
-                labels = [off for _name, off in points.get(day, [])]
-                text = " / ".join(labels) if labels else "待填"
-                off_cell = ws.cell(offset_row, col, text)
-                if text.startswith("+"):
-                    off_cell.font = Font(name="微软雅黑", size=8, color="B91C1C", bold=True)
-                elif text.startswith("-"):
-                    off_cell.font = Font(name="微软雅黑", size=8, color="15803D", bold=True)
-                else:
-                    off_cell.font = Font(name="微软雅黑", size=8, color="6B7280")
-                off_cell.alignment = center
-        for r in range(label_top, offset_row + 1):
-            ws.row_dimensions[r].height = 40 if r < tick_row else 18
-        row = offset_row + 2
-    return row
-
-
-def _add_main_sheet_timelines(ws, start_row: int, last_data_row: int) -> None:
-    dates = _unique_dates()
-    start, end = dates[0], dates[-1]
-    after_planned = _draw_segment_axis(
-        ws,
-        start_row,
-        title="目标时间轴（按预估完成节点）",
-        subtitle=(
-            f"左端为首个任务 {start.isoformat()}，右端为最终任务 {end.isoformat()}。"
-            "按不重复日期从左到右分段（每行最多 9 个节点，下一行续接）；同一天多个任务上下叠放。"
-        ),
-        dates=dates,
-        points=_points_by_date(use_actual=False),
-        show_offset=False,
-        bar_color="1F4E78",
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
+    title = ws.cell(
+        1,
+        1,
+        f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天；条长 = 日历天数）",
     )
-    _draw_segment_axis(
-        ws,
-        after_planned + 1,
-        title="实际时间轴（按实际完成节点）",
-        subtitle=(
-            "与目标轴共用同一组日期刻度，便于对照偏移。偏移 = 实际 − 预估（正值延期）。"
-            "主表「实际完成节点」为空时，刻度保留并显示「待填」。"
-        ),
-        dates=dates,
-        points=_points_by_date(use_actual=True),
-        show_offset=True,
-        bar_color="C2410C",
+    title.font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
+    title.alignment = left
+    ws.row_dimensions[1].height = 22
+
+    # Month bands above the day axis.
+    month_start = 0
+    for idx, day in enumerate(days):
+        nxt = days[idx + 1] if idx + 1 < len(days) else None
+        if nxt is None or nxt.month != day.month:
+            col1 = DAY_COL_START + month_start
+            col2 = DAY_COL_START + idx
+            if col2 > col1:
+                ws.merge_cells(start_row=1, start_column=col1, end_row=1, end_column=col2)
+            cell = ws.cell(1, col1, f"{day.year}年{day.month}月")
+            cell.fill = month_fill
+            cell.font = header_font
+            cell.alignment = center
+            for col in range(col1, col2 + 1):
+                painted = ws.cell(1, col)
+                painted.fill = month_fill
+                painted.border = thin
+            month_start = idx + 1
+
+    labels = ("类型", "阶段", "任务", "预估完成", "实际完成", "偏移")
+    for col, name in enumerate(labels, start=1):
+        cell = ws.cell(2, col, name)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = center
+        cell.border = thin
+
+    for idx, day in enumerate(days):
+        col = DAY_COL_START + idx
+        cell = ws.cell(2, col, day)
+        cell.number_format = "D"
+        cell.font = Font(name="微软雅黑", size=7, color="FFFFFF" if day.weekday() < 5 else "FDE68A")
+        cell.fill = header_fill if day.weekday() < 5 else PatternFill("solid", fgColor="334155")
+        cell.alignment = center
+        cell.border = thin
+        ws.column_dimensions[get_column_letter(col)].width = 2.6
+    ws.row_dimensions[2].height = 18
+
+    for idx, width in enumerate((8, 8, 22, 12, 12, 10), start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
+
+    row = 3
+    for task, _summary, planned, actual, _reason, _owner in ROWS:
+        brief = brief_for_task(task)
+        phase = phase_for_task(task)
+        offset = _offset_label(planned, actual)
+        for kind in ("预估", "实际"):
+            values = (
+                kind,
+                phase,
+                brief,
+                planned,
+                actual if actual is not None else "待填",
+                offset if kind == "实际" else "",
+            )
+            for col, value in enumerate(values, start=1):
+                cell = ws.cell(row, col, value)
+                cell.font = body_font
+                cell.border = thin
+                cell.alignment = left if col == 3 else center
+                if col in (4, 5) and isinstance(value, date):
+                    cell.number_format = "YYYY-MM-DD"
+                if row % 2 == 0:
+                    cell.fill = alt_label
+            finish = planned if kind == "预估" else actual
+            for idx in range(len(days)):
+                ws.cell(row, DAY_COL_START + idx).border = thin
+            if finish is not None:
+                color = planned_bar
+                if kind == "实际":
+                    delta = (actual - planned).days
+                    if delta > 0:
+                        color = delay_bar
+                    elif delta < 0:
+                        color = early_bar
+                    else:
+                        color = actual_bar
+                _fill_bar(ws, row, start, finish, color)
+            else:
+                pending = ws.cell(row, DAY_COL_START, "待填（尚无实际完成日期）")
+                pending.font = small
+                pending.alignment = left
+                pending.fill = pending_fill
+                ws.merge_cells(
+                    start_row=row,
+                    start_column=DAY_COL_START,
+                    end_row=row,
+                    end_column=min(DAY_COL_START + 14, last_day_col),
+                )
+            if kind == "实际" and actual is not None:
+                off_cell = ws.cell(row, 6)
+                if offset.startswith("+"):
+                    off_cell.font = Font(name="微软雅黑", size=9, color="B91C1C", bold=True)
+                elif offset.startswith("-"):
+                    off_cell.font = Font(name="微软雅黑", size=9, color="15803D", bold=True)
+            ws.row_dimensions[row].height = 16
+            row += 1
+
+    legend_row = row + 1
+    ws.merge_cells(start_row=legend_row, start_column=1, end_row=legend_row, end_column=6)
+    legend = ws.cell(
+        legend_row,
+        1,
+        "图例：蓝条=预估（从项目首日铺到预估完成日，格数=日历天数）；"
+        "橙/红/绿=实际（准时/延期/提前）。未填实际完成节点时显示「待填」。深色列为周末。",
     )
-    _ = last_data_row
+    legend.font = Font(name="微软雅黑", size=9, color="6B7280")
+    legend.alignment = Alignment(wrap_text=True, vertical="center")
+    ws.row_dimensions[legend_row].height = 32
+    samples = (
+        (planned_bar, "预估"),
+        (actual_bar, "实际·准时"),
+        (delay_bar, "实际·延期"),
+        (early_bar, "实际·提前"),
+    )
+    for offset, (color, text) in enumerate(samples):
+        cell = ws.cell(legend_row, DAY_COL_START + offset * 4, text)
+        cell.fill = PatternFill("solid", fgColor=color)
+        cell.font = Font(name="微软雅黑", size=8, color="FFFFFF", bold=True)
+        cell.alignment = center
+
+    ws.freeze_panes = "G3"
+    ws.sheet_view.showGridLines = False
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToPage = False
+    ws.page_setup.paperSize = ws.PAPERSIZE_A3
+    ws.print_title_rows = "1:2"
+    ws.print_title_cols = "A:F"
+    ws.sheet_view.zoomScale = 90
 
 
 def _merge_consecutive(ws, col: int, labels: list[str], fill, font, align, border) -> None:
@@ -683,7 +749,7 @@ def build_workbook(output_path: Path | None = None) -> Path:
         note_row,
         1,
         "说明：A列按第一期/第二期合并，B列按任务组合并。偏移天数=实际−预估（正值延期）。"
-        "下方为目标时间轴与实际时间轴：按不重复日期从左到右分段，同一刻度对照偏移。",
+        "进度条见工作表「甘特图」：横轴每一格为 1 个自然日，色条长度等于从项目起始日到完成节点的日历天数。",
     )
     note.font = Font(name="微软雅黑", size=9, color="6B7280")
     note.alignment = Alignment(wrap_text=True, vertical="center")
@@ -693,7 +759,7 @@ def build_workbook(output_path: Path | None = None) -> Path:
     date_dv.add(f"E2:F{max(last_data_row, 200)}")
     ws.add_data_validation(date_dv)
 
-    _add_main_sheet_timelines(ws, note_row + 2, last_data_row)
+    _add_gantt_sheet(wb)
 
     target = output_path or (_project_root() / OUTPUT_NAME)
     wb.save(target)
