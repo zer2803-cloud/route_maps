@@ -435,62 +435,47 @@ def _calendar_days() -> list[date]:
     return [start + timedelta(days=i) for i in range((end - start).days + 1)]
 
 
-def _offset_label(planned: date, actual: date | None) -> str:
-    if actual is None:
-        return "待填"
-    delta = (actual - planned).days
-    if delta > 0:
-        return f"+{delta}天"
-    if delta < 0:
-        return f"{delta}天"
-    return "0天"
-
-
-def _fill_bar(ws, row: int, start: date, end: date, color: str) -> None:
-    """Paint one cell per calendar day from project start through `end` (inclusive)."""
-    fill = PatternFill("solid", fgColor=color)
-    last_idx = (end - start).days
-    for idx in range(last_idx + 1):
-        cell = ws.cell(row, DAY_COL_START + idx)
-        cell.fill = fill
-    finish = ws.cell(row, DAY_COL_START + last_idx, end.day)
-    finish.font = Font(name="微软雅黑", size=7, color="FFFFFF", bold=True)
-    finish.alignment = Alignment(horizontal="center", vertical="center")
-    finish.number_format = "0"
+def _main_ref(cell: str) -> str:
+    return f"'时间节点计划表'!{cell}"
 
 
 def _add_gantt_sheet(wb) -> None:
-    """Calendar-day Gantt: equal-width columns, bar length = days from project start to finish."""
+    """Calendar-day Gantt; bar color/length follow date cells via conditional formatting."""
     ws = wb.create_sheet("甘特图")
     days = _calendar_days()
     start, end = days[0], days[-1]
     last_day_col = DAY_COL_START + len(days) - 1
+    last_col_letter = get_column_letter(last_day_col)
+    last_gantt_row = 2 + 2 * len(ROWS)
     thin = _thin_border()
     center = Alignment(horizontal="center", vertical="center", wrap_text=True)
     left = Alignment(horizontal="left", vertical="center", wrap_text=True)
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(name="微软雅黑", bold=True, color="FFFFFF", size=10)
     month_fill = PatternFill("solid", fgColor="2E75B6")
-    planned_bar = "5B8BD5"
+    planned_bar = "2F80ED"
     actual_bar = "F59E0B"
     delay_bar = "DC2626"
     early_bar = "16A34A"
-    pending_fill = PatternFill("solid", fgColor="F8FAFC")
     alt_label = PatternFill("solid", fgColor="F8FAFC")
     body_font = Font(name="微软雅黑", size=9)
-    small = Font(name="微软雅黑", size=8, color="334155")
+    planned_fill = PatternFill("solid", fgColor=planned_bar)
+    actual_fill = PatternFill("solid", fgColor=actual_bar)
+    delay_fill = PatternFill("solid", fgColor=delay_bar)
+    early_fill = PatternFill("solid", fgColor=early_bar)
+    white_font = Font(name="微软雅黑", color="FFFFFF", bold=True, size=9)
 
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=6)
     title = ws.cell(
         1,
         1,
-        f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天；条长 = 日历天数）",
+        f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天）。"
+        "色条由条件格式自动生成：请在「时间节点计划表」填写预估/实际日期，无需手工涂色。",
     )
-    title.font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
+    title.font = Font(name="微软雅黑", bold=True, size=11, color="1F4E78")
     title.alignment = left
-    ws.row_dimensions[1].height = 22
+    ws.row_dimensions[1].height = 28
 
-    # Month bands above the day axis.
     month_start = 0
     for idx, day in enumerate(days):
         nxt = days[idx + 1] if idx + 1 < len(days) else None
@@ -525,80 +510,101 @@ def _add_gantt_sheet(wb) -> None:
         cell.fill = header_fill if day.weekday() < 5 else PatternFill("solid", fgColor="334155")
         cell.alignment = center
         cell.border = thin
-        ws.column_dimensions[get_column_letter(col)].width = 2.6
+        ws.column_dimensions[get_column_letter(col)].width = 3.0
     ws.row_dimensions[2].height = 18
 
     for idx, width in enumerate((8, 8, 22, 12, 12, 10), start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
 
     row = 3
-    for task, _summary, planned, actual, _reason, _owner in ROWS:
+    for task_idx, (task, _summary, _planned, _actual, _reason, _owner) in enumerate(ROWS):
+        main_row = 2 + task_idx
         brief = brief_for_task(task)
         phase = phase_for_task(task)
-        offset = _offset_label(planned, actual)
+        planned_ref = f'=IF({_main_ref(f"E{main_row}")}="","",{_main_ref(f"E{main_row}")})'
+        actual_ref = f'=IF({_main_ref(f"F{main_row}")}="","",{_main_ref(f"F{main_row}")})'
         for kind in ("预估", "实际"):
-            values = (
-                kind,
-                phase,
-                brief,
-                planned,
-                actual if actual is not None else "待填",
-                offset if kind == "实际" else "",
-            )
+            offset_formula = f'=IF(OR(D{row}="",E{row}=""),"待填",E{row}-D{row})' if kind == "实际" else ""
+            values = (kind, phase, brief, planned_ref, actual_ref, offset_formula)
             for col, value in enumerate(values, start=1):
                 cell = ws.cell(row, col, value)
                 cell.font = body_font
                 cell.border = thin
                 cell.alignment = left if col == 3 else center
-                if col in (4, 5) and isinstance(value, date):
+                if col in (4, 5):
                     cell.number_format = "YYYY-MM-DD"
+                if col == 6:
+                    cell.number_format = "0"
                 if row % 2 == 0:
                     cell.fill = alt_label
-            finish = planned if kind == "预估" else actual
             for idx in range(len(days)):
                 ws.cell(row, DAY_COL_START + idx).border = thin
-            if finish is not None:
-                color = planned_bar
-                if kind == "实际":
-                    delta = (actual - planned).days
-                    if delta > 0:
-                        color = delay_bar
-                    elif delta < 0:
-                        color = early_bar
-                    else:
-                        color = actual_bar
-                _fill_bar(ws, row, start, finish, color)
-            else:
-                pending = ws.cell(row, DAY_COL_START, "待填（尚无实际完成日期）")
-                pending.font = small
-                pending.alignment = left
-                pending.fill = pending_fill
-                ws.merge_cells(
-                    start_row=row,
-                    start_column=DAY_COL_START,
-                    end_row=row,
-                    end_column=min(DAY_COL_START + 14, last_day_col),
-                )
-            if kind == "实际" and actual is not None:
-                off_cell = ws.cell(row, 6)
-                if offset.startswith("+"):
-                    off_cell.font = Font(name="微软雅黑", size=9, color="B91C1C", bold=True)
-                elif offset.startswith("-"):
-                    off_cell.font = Font(name="微软雅黑", size=9, color="15803D", bold=True)
-            ws.row_dimensions[row].height = 16
+            ws.row_dimensions[row].height = 18
             row += 1
 
-    legend_row = row + 1
+    bar_range = f"G3:{last_col_letter}{last_gantt_row}"
+    planned_formula = 'AND($A3="预估",ISNUMBER($D3),G$2>=$G$2,G$2<=$D3)'
+    ontime_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3=$D3)'
+    delay_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3>$D3)'
+    early_formula = 'AND($A3="实际",ISNUMBER($E3),G$2>=$G$2,G$2<=$E3,$E3<$D3)'
+    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[planned_formula], fill=planned_fill))
+    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[ontime_formula], fill=actual_fill))
+    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[delay_formula], fill=delay_fill))
+    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[early_formula], fill=early_fill))
+
+    type_range = f"A3:A{last_gantt_row}"
+    ws.conditional_formatting.add(
+        type_range,
+        FormulaRule(formula=['AND($A3="预估",ISNUMBER($D3))'], fill=planned_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        type_range,
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3>$D3)'], fill=delay_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        type_range,
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3<$D3)'], fill=early_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        type_range,
+        FormulaRule(formula=['AND($A3="实际",ISNUMBER($E3),$E3=$D3)'], fill=actual_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"D3:D{last_gantt_row}",
+        FormulaRule(formula=["ISNUMBER(D3)"], fill=planned_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"E3:E{last_gantt_row}",
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3>D3)"], fill=delay_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"E3:E{last_gantt_row}",
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3<D3)"], fill=early_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"E3:E{last_gantt_row}",
+        FormulaRule(formula=["AND(ISNUMBER(E3),E3=D3)"], fill=actual_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"F3:F{last_gantt_row}",
+        FormulaRule(formula=['AND(ISNUMBER(F3),F3>0)'], fill=delay_fill, font=white_font),
+    )
+    ws.conditional_formatting.add(
+        f"F3:F{last_gantt_row}",
+        FormulaRule(formula=['AND(ISNUMBER(F3),F3<0)'], fill=early_fill, font=Font(name="微软雅黑", color="14532D", size=9)),
+    )
+
+    legend_row = last_gantt_row + 2
     ws.merge_cells(start_row=legend_row, start_column=1, end_row=legend_row, end_column=6)
     legend = ws.cell(
         legend_row,
         1,
-        "图例：蓝条=预估（从项目首日铺到预估完成日，格数=日历天数）；"
-        "橙/红/绿=实际（准时/延期/提前）。未填实际完成节点时显示「待填」。深色列为周末。",
+        "用法：在主表填写日期即可，本表色条自动变长/变色，不要手工涂格子。"
+        "蓝条=预估（项目首日→预估完成日）；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
     )
     legend.font = Font(name="微软雅黑", size=9, color="6B7280")
     legend.alignment = Alignment(wrap_text=True, vertical="center")
-    ws.row_dimensions[legend_row].height = 32
+    ws.row_dimensions[legend_row].height = 36
     samples = (
         (planned_bar, "预估"),
         (actual_bar, "实际·准时"),
@@ -725,6 +731,22 @@ def build_workbook(output_path: Path | None = None) -> Path:
         ),
     )
     ws.conditional_formatting.add(
+        f"E2:E{last_data_row}",
+        FormulaRule(
+            formula=["ISNUMBER(E2)"],
+            fill=PatternFill("solid", fgColor="2F80ED"),
+            font=Font(name="微软雅黑", color="FFFFFF", size=10),
+        ),
+    )
+    ws.conditional_formatting.add(
+        f"F2:F{max(last_data_row, 200)}",
+        FormulaRule(
+            formula=["AND(ISNUMBER(F2),ISNUMBER(E2),F2<=E2)"],
+            fill=early_fill,
+            font=Font(name="微软雅黑", color="14532D", size=10),
+        ),
+    )
+    ws.conditional_formatting.add(
         f"I2:I{last_data_row}",
         FormulaRule(formula=['AND(ISNUMBER(I2),I2>0)'], fill=overtime_fill, font=Font(name="微软雅黑", color="FFFFFF", size=10)),
     )
@@ -749,11 +771,12 @@ def build_workbook(output_path: Path | None = None) -> Path:
         note_row,
         1,
         "说明：A列按第一期/第二期合并，B列按任务组合并。偏移天数=实际−预估（正值延期）。"
-        "进度条见工作表「甘特图」：横轴每一格为 1 个自然日，色条长度等于从项目起始日到完成节点的日历天数。",
+        "日期请在本表 E/F 列填写（不要手工涂色）：预估有日期后自动蓝底，实际填写后按时绿底、超时红底。"
+        "甘特图色条随本表日期自动变长/变色，见工作表「甘特图」（向右滚动查看按天色条）。",
     )
     note.font = Font(name="微软雅黑", size=9, color="6B7280")
     note.alignment = Alignment(wrap_text=True, vertical="center")
-    ws.row_dimensions[note_row].height = 40
+    ws.row_dimensions[note_row].height = 48
 
     date_dv = DataValidation(type="date", operator="greaterThan", formula1="DATE(2020,1,1)", allow_blank=True)
     date_dv.add(f"E2:F{max(last_data_row, 200)}")

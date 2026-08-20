@@ -44,6 +44,7 @@ def test_headers_and_overdue_rule(tmp_path: Path) -> None:
         for rule in ws.conditional_formatting._cf_rules[cf_range]:
             formulas.extend(rule.formula)
     assert any("F2>E2" in formula for formula in formulas)
+    assert any("ISNUMBER(E2)" in formula for formula in formulas)
 
 
 def test_phase_column_is_merged(tmp_path: Path) -> None:
@@ -105,19 +106,22 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
             last_task_row = row
             break
     assert last_task_row is not None
-    filled = 0
-    for c in range(7, 7 + len(dates)):
-        fill = ws.cell(last_task_row, c).fill
-        if fill and fill.fgColor and fill.fgColor.rgb not in ("00000000", "0"):
-            if fill.fill_type:
-                filled += 1
-    assert filled == (date(2026, 10, 23) - date(2026, 8, 24)).days + 1
+    # Dates come from the main sheet; bars are conditional-format (auto, not hand-painted).
+    assert "E45" in str(ws.cell(last_task_row, 4).value)
+    assert "F45" in str(ws.cell(last_task_row, 5).value)
+    formulas = []
+    for cf_range in ws.conditional_formatting._cf_rules:
+        for rule in ws.conditional_formatting._cf_rules[cf_range]:
+            formulas.extend(rule.formula)
+    assert any("预估" in formula and "$D3" in formula and "G$2<=$D3" in formula for formula in formulas)
+    assert any("实际" in formula and "$E3" in formula and "G$2<=$E3" in formula for formula in formulas)
+    assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
 
 
 def test_main_sheet_points_to_gantt(tmp_path: Path) -> None:
     ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
     note = " ".join(str(c.value) for row in ws.iter_rows(min_row=46, max_row=50) for c in row if c.value)
     assert "甘特图" in note
+    assert "手工涂色" in note
     assert not any(c.value == "▶" for row in ws.iter_rows(min_row=47, max_row=90) for c in row)
-
 
