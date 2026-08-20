@@ -70,19 +70,37 @@ def test_source_covers_both_phases(tmp_path: Path) -> None:
     assert names[-1] == "PAB220·双级样机"
 
 
-def test_timelines_exist(tmp_path: Path) -> None:
-    path = build_workbook(tmp_path / "plan.xlsx")
-    wb = load_workbook(path)
-    main = wb.active
-    assert any(c.value and "时间轴" in str(c.value) for row in main.iter_rows(min_row=46, max_row=55) for c in row)
-    assert main._charts, "main sheet should include a timeline chart"
+def _cell_date(value):
+    if value is None:
+        return None
+    if isinstance(value, date) and not hasattr(value, "hour"):
+        return value
+    if hasattr(value, "date"):
+        return value.date()
+    return None
 
-    assert "时间轴" in wb.sheetnames
-    axis = wb["时间轴"]
-    texts = [str(c.value) for row in axis.iter_rows(max_row=8) for c in row if c.value]
-    assert any("目标时间轴" in t for t in texts)
-    assert any("2026-08-24" in t for t in texts)
-    later = [str(c.value) for row in axis.iter_rows(min_row=1, max_row=40) for c in row if c.value]
-    assert any("实际时间轴" in t for t in later)
-    assert any("▶" in t for t in later)
-    assert any("2026-10-23" in t for t in later)
+
+def test_timeline_is_on_main_sheet_below_table(tmp_path: Path) -> None:
+    ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
+    below = list(ws.iter_rows(min_row=47, max_row=120, max_col=9))
+    titles = [str(c.value) for row in below for c in row if c.value]
+    assert any("目标时间轴" in t for t in titles)
+    assert any("实际时间轴" in t for t in titles)
+    assert any(c.value == "▶" for row in below for c in row)
+    assert not ws._charts, "do not use the broken scatter chart"
+
+
+def test_timeline_segments_are_chronological_unique_dates(tmp_path: Path) -> None:
+    ws = load_workbook(build_workbook(tmp_path / "plan.xlsx")).active
+    dates = []
+    for row in ws.iter_rows(min_row=47, max_row=90, min_col=1, max_col=9):
+        row_dates = [d for d in (_cell_date(c.value) for c in row) if d]
+        if len(row_dates) >= 3:
+            dates.extend(row_dates)
+            break
+    assert dates, "timeline date row should sit below the task table"
+    assert dates[0] == date(2026, 8, 24)
+    assert dates == sorted(dates)
+    assert len(dates) == len(set(dates))
+    assert len(dates) <= 9
+

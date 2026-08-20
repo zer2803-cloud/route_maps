@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -421,22 +421,138 @@ def _thin_border() -> Border:
     )
 
 
-def _to_date(value: date | None) -> date | None:
-    if value is None:
-        return None
-    if isinstance(value, date) and not hasattr(value, "hour"):
-        return value
-    if hasattr(value, "date"):
-        return value.date()
-    return value
+def _unique_dates() -> list[date]:
+    dates = [row[2] for row in ROWS]
+    dates.extend(row[3] for row in ROWS if row[3] is not None)
+    return sorted(set(dates))
 
 
-def _axis_column(value: date, start: date, end: date, first_col: int, n_cols: int) -> int:
-    span = (end - start).days
-    if span <= 0:
-        return first_col
-    offset = round((value - start).days / span * (n_cols - 1))
-    return first_col + max(0, min(n_cols - 1, offset))
+def _offset_label(planned: date, actual: date | None) -> str:
+    if actual is None:
+        return "待填"
+    delta = (actual - planned).days
+    if delta > 0:
+        return f"+{delta}天"
+    if delta < 0:
+        return f"{delta}天"
+    return "0天"
+
+
+def _points_by_date(*, use_actual: bool) -> dict[date, list[tuple[str, str]]]:
+    grouped: dict[date, list[tuple[str, str]]] = {}
+    for task, _summary, planned, actual, _reason, _owner in ROWS:
+        when = actual if use_actual else planned
+        if when is None:
+            continue
+        grouped.setdefault(when, []).append((brief_for_task(task), _offset_label(planned, actual)))
+    return grouped
+
+
+def _draw_segment_axis(
+    ws,
+    start_row: int,
+    *,
+    title: str,
+    subtitle: str,
+    dates: list[date],
+    points: dict[date, list[tuple[str, str]]],
+    show_offset: bool,
+    bar_color: str,
+) -> int:
+    """Draw a wrapping left-to-right axis using columns A–I (one unique date per cell)."""
+    cols = 9
+    title_font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
+    sub_font = Font(name="微软雅黑", size=9, color="6B7280")
+    label_font = Font(name="微软雅黑", size=8, color="1F2937")
+    date_font = Font(name="微软雅黑", size=8, color="334155")
+    bar_fill = PatternFill("solid", fgColor=bar_color)
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=cols)
+    ws.cell(start_row, 1, title).font = title_font
+    ws.merge_cells(start_row=start_row + 1, start_column=1, end_row=start_row + 1, end_column=cols)
+    ws.cell(start_row + 1, 1, subtitle).font = sub_font
+    ws.cell(start_row + 1, 1).alignment = Alignment(wrap_text=True, vertical="center")
+    ws.row_dimensions[start_row + 1].height = 28
+
+    row = start_row + 2
+    total = len(dates)
+    for chunk_start in range(0, total, cols):
+        chunk = dates[chunk_start : chunk_start + cols]
+        last_chunk = chunk_start + cols >= total
+        stack = max((len(points.get(day, [])) for day in chunk), default=1)
+        label_top = row
+        for offset, day in enumerate(chunk):
+            col = 1 + offset
+            for idx, (name, _off) in enumerate(points.get(day, [])):
+                cell = ws.cell(label_top + idx, col, name)
+                cell.font = label_font
+                cell.alignment = Alignment(horizontal="center", vertical="bottom", wrap_text=True)
+        tick_row = label_top + stack
+        axis_row = tick_row + 1
+        date_row = axis_row + 1
+        offset_row = date_row + 1 if show_offset else date_row
+        for offset, day in enumerate(chunk):
+            col = 1 + offset
+            tick = ws.cell(tick_row, col, "▼" if day in points else "·")
+            tick.font = Font(name="微软雅黑", size=9, color=bar_color)
+            tick.alignment = center
+            last_cell = last_chunk and offset == len(chunk) - 1
+            bar = ws.cell(axis_row, col, "▶" if last_cell else "━")
+            bar.fill = bar_fill
+            bar.font = Font(name="微软雅黑", color="FFFFFF", bold=True, size=11)
+            bar.alignment = center
+            date_cell = ws.cell(date_row, col, day)
+            date_cell.number_format = "YYYY-MM-DD"
+            date_cell.font = date_font
+            date_cell.alignment = center
+            if show_offset:
+                labels = [off for _name, off in points.get(day, [])]
+                text = " / ".join(labels) if labels else "待填"
+                off_cell = ws.cell(offset_row, col, text)
+                if text.startswith("+"):
+                    off_cell.font = Font(name="微软雅黑", size=8, color="B91C1C", bold=True)
+                elif text.startswith("-"):
+                    off_cell.font = Font(name="微软雅黑", size=8, color="15803D", bold=True)
+                else:
+                    off_cell.font = Font(name="微软雅黑", size=8, color="6B7280")
+                off_cell.alignment = center
+        for r in range(label_top, offset_row + 1):
+            ws.row_dimensions[r].height = 40 if r < tick_row else 18
+        row = offset_row + 2
+    return row
+
+
+def _add_main_sheet_timelines(ws, start_row: int, last_data_row: int) -> None:
+    dates = _unique_dates()
+    start, end = dates[0], dates[-1]
+    after_planned = _draw_segment_axis(
+        ws,
+        start_row,
+        title="目标时间轴（按预估完成节点）",
+        subtitle=(
+            f"左端为首个任务 {start.isoformat()}，右端为最终任务 {end.isoformat()}。"
+            "按不重复日期从左到右分段（每行最多 9 个节点，下一行续接）；同一天多个任务上下叠放。"
+        ),
+        dates=dates,
+        points=_points_by_date(use_actual=False),
+        show_offset=False,
+        bar_color="1F4E78",
+    )
+    _draw_segment_axis(
+        ws,
+        after_planned + 1,
+        title="实际时间轴（按实际完成节点）",
+        subtitle=(
+            "与目标轴共用同一组日期刻度，便于对照偏移。偏移 = 实际 − 预估（正值延期）。"
+            "主表「实际完成节点」为空时，刻度保留并显示「待填」。"
+        ),
+        dates=dates,
+        points=_points_by_date(use_actual=True),
+        show_offset=True,
+        bar_color="C2410C",
+    )
+    _ = last_data_row
 
 
 def _merge_consecutive(ws, col: int, labels: list[str], fill, font, align, border) -> None:
@@ -464,136 +580,6 @@ def _merge_consecutive(ws, col: int, labels: list[str], fill, font, align, borde
             break
         start = idx
         current = label
-
-
-def _draw_arrow_axis(ws, *, title_row: int, title: str, subtitle: str, points: list[tuple[date, str, str]], start: date, end: date, axis_color: str, show_offset: bool) -> int:
-    """Draw a left-to-right dated axis. Returns the last row used."""
-    first_col = 2
-    n_cols = (end - start).days + 1
-    last_col = first_col + n_cols - 1
-    title_font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
-    sub_font = Font(name="微软雅黑", size=9, color="6B7280")
-    label_font = Font(name="微软雅黑", size=8, color="1F2937")
-    date_font = Font(name="微软雅黑", size=7, color="334155")
-    axis_fill = PatternFill("solid", fgColor=axis_color)
-    ws.merge_cells(start_row=title_row, start_column=1, end_row=title_row, end_column=min(8, last_col))
-    ws.cell(title_row, 1, title).font = title_font
-    ws.merge_cells(start_row=title_row + 1, start_column=1, end_row=title_row + 1, end_column=min(8, last_col))
-    ws.cell(title_row + 1, 1, subtitle).font = sub_font
-
-    buckets: dict[int, list[tuple[str, str]]] = {}
-    for when, name, offset_text in points:
-        col = _axis_column(when, start, end, first_col, n_cols)
-        buckets.setdefault(col, []).append((name, offset_text))
-    stack = max((len(items) for items in buckets.values()), default=1)
-    label_top = title_row + 2
-    for col, items in buckets.items():
-        for idx, (name, offset_text) in enumerate(items):
-            cell = ws.cell(label_top + idx, col, name)
-            cell.font = label_font
-            cell.alignment = Alignment(horizontal="center", vertical="bottom", wrap_text=True, textRotation=90)
-            if show_offset:
-                off = ws.cell(label_top + stack + idx, col, offset_text)
-                if offset_text.startswith("+"):
-                    off.font = Font(name="微软雅黑", size=8, color="B91C1C", bold=True)
-                elif offset_text.startswith("-"):
-                    off.font = Font(name="微软雅黑", size=8, color="15803D", bold=True)
-                else:
-                    off.font = Font(name="微软雅黑", size=8, color="6B7280")
-                off.alignment = Alignment(horizontal="center", vertical="center", textRotation=90)
-
-    tick_row = label_top + stack + (stack if show_offset else 0)
-    axis_row = tick_row + 1
-    date_row = axis_row + 1
-    for col in range(first_col, last_col + 1):
-        day = start + timedelta(days=col - first_col)
-        tick = ws.cell(tick_row, col, "▼" if col in buckets or day in {start, end} else "·")
-        tick.font = Font(name="微软雅黑", size=8, color=axis_color)
-        tick.alignment = Alignment(horizontal="center")
-        bar = ws.cell(axis_row, col, "▶" if col == last_col else "━")
-        bar.fill = axis_fill
-        bar.font = Font(name="微软雅黑", color="FFFFFF", bold=True, size=10)
-        bar.alignment = Alignment(horizontal="center", vertical="center")
-        if col == first_col or col == last_col or day.day in {1, 15} or col in buckets:
-            date_cell = ws.cell(date_row, col, day)
-            date_cell.number_format = "M/D"
-            date_cell.font = date_font
-            date_cell.alignment = Alignment(horizontal="center", textRotation=90)
-        ws.column_dimensions[get_column_letter(col)].width = 3.2
-    ws.cell(axis_row, 1, f"{start.isoformat()} →").font = Font(name="微软雅黑", size=8, color="1F4E78")
-    ws.cell(axis_row, last_col + 1, start.isoformat() if False else f"→ {end.isoformat()}").font = Font(name="微软雅黑", size=8, color="1F4E78")
-    ws.column_dimensions[get_column_letter(last_col + 1)].width = 14
-    for row in range(label_top, date_row + 1):
-        ws.row_dimensions[row].height = 48 if row < tick_row else 18
-    return date_row
-
-
-def _add_timeline_sheet(wb: Workbook) -> None:
-    from datetime import timedelta
-
-    ws = wb.create_sheet("时间轴")
-    planned_points = [(row[2], brief_for_task(row[0]), "目标") for row in ROWS]
-    actual_points: list[tuple[date, str, str]] = []
-    for task, _summary, planned, actual, _reason, _owner in ROWS:
-        brief = brief_for_task(task)
-        if actual is None:
-            continue
-        delta = (actual - planned).days
-        if delta > 0:
-            offset = f"+{delta}天"
-        elif delta < 0:
-            offset = f"{delta}天"
-        else:
-            offset = "0天"
-        actual_points.append((actual, brief, offset))
-
-    start = min(row[2] for row in ROWS)
-    end = max(row[2] for row in ROWS)
-    if actual_points:
-        start = min(start, min(item[0] for item in actual_points))
-        end = max(end, max(item[0] for item in actual_points))
-
-    last = _draw_arrow_axis(
-        ws,
-        title_row=1,
-        title="目标时间轴（按预估完成节点）",
-        subtitle=f"左端为首个任务 {start.isoformat()}，右端为最终任务 {end.isoformat()}，其余任务按日历天数分段落在轴上。",
-        points=planned_points,
-        start=start,
-        end=end,
-        axis_color="1F4E78",
-        show_offset=False,
-    )
-    actual_title = "实际时间轴（按实际完成节点；偏移度 = 实际 − 预估，正值延期）"
-    actual_sub = (
-        "尚无实际完成节点。填写主表「实际完成节点」后重新生成本表即可刷新本轴。"
-        if not actual_points
-        else "节点位置按实际日期落轴；轴下旋转文字为相对预估的偏移天数。"
-    )
-    _draw_arrow_axis(
-        ws,
-        title_row=last + 2,
-        title=actual_title,
-        subtitle=actual_sub,
-        points=actual_points,
-        start=start,
-        end=end,
-        axis_color="C2410C",
-        show_offset=True,
-    )
-    legend_row = last + 2
-    # legend placed after second axis by scanning used rows
-    legend_row = ws.max_row + 2
-    ws.cell(legend_row, 1, "偏移图例：+N天=延期（红）；-N天=提前（绿）；0天=按期；待填=主表实际完成节点为空。两轴共用同一起止日期，便于对照时间偏移。").font = Font(
-        name="微软雅黑", size=9, color="6B7280"
-    )
-    ws.column_dimensions["A"].width = 22
-    ws.freeze_panes = "B3"
-    ws.sheet_view.showGridLines = False
-    ws.page_setup.orientation = "landscape"
-    ws.page_setup.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
 
 
 def build_workbook(output_path: Path | None = None) -> Path:
@@ -697,7 +683,7 @@ def build_workbook(output_path: Path | None = None) -> Path:
         note_row,
         1,
         "说明：A列按第一期/第二期合并，B列按任务组合并。偏移天数=实际−预估（正值延期）。"
-        "下方为时间轴图；同文件工作表「时间轴」为按日历天数展开的带箭头轴（目标轴在上、实际轴在下，两轴共用起止日期以对照偏移）。",
+        "下方为目标时间轴与实际时间轴：按不重复日期从左到右分段，同一刻度对照偏移。",
     )
     note.font = Font(name="微软雅黑", size=9, color="6B7280")
     note.alignment = Alignment(wrap_text=True, vertical="center")
@@ -708,89 +694,11 @@ def build_workbook(output_path: Path | None = None) -> Path:
     ws.add_data_validation(date_dv)
 
     _add_main_sheet_timelines(ws, note_row + 2, last_data_row)
-    _add_timeline_sheet(wb)
 
     target = output_path or (_project_root() / OUTPUT_NAME)
     wb.save(target)
     return target
 
-
-def _add_main_sheet_timelines(ws, start_row: int, last_data_row: int) -> None:
-    from openpyxl.chart import ScatterChart, Reference, Series
-    from openpyxl.chart.marker import Marker
-    from openpyxl.chart.series import SeriesLabel
-    from openpyxl.chart.shapes import GraphicalProperties
-    from openpyxl.drawing.line import LineProperties
-    from openpyxl.chart.axis import DateAxis
-
-    ws.cell(start_row, 1, "目标时间轴 / 实际时间轴").font = Font(name="微软雅黑", bold=True, size=12, color="1F4E78")
-    ws.merge_cells(start_row=start_row, start_column=1, end_row=start_row, end_column=9)
-    ws.cell(
-        start_row + 1,
-        1,
-        "下图按预估日期生成从左到右的目标轴；橙色点为实际完成（若已填写）。X 轴左端=首个任务日期，右端=最终任务日期。点相对目标点的左右位移即时间偏移。",
-    ).font = Font(name="微软雅黑", size=9, color="6B7280")
-    ws.merge_cells(start_row=start_row + 1, start_column=1, end_row=start_row + 1, end_column=9)
-
-    # Chart data block to the right of the table, not printed as primary view.
-    data_row0 = start_row + 3
-    ws.cell(data_row0, 11, "任务简要")
-    ws.cell(data_row0, 12, "预估")
-    ws.cell(data_row0, 13, "目标Y")
-    ws.cell(data_row0, 14, "实际")
-    ws.cell(data_row0, 15, "实际Y")
-    ws.cell(data_row0, 16, "轴Y")
-    for idx, (task, _summary, planned, actual, _reason, _owner) in enumerate(ROWS, start=1):
-        r = data_row0 + idx
-        ws.cell(r, 11, brief_for_task(task))
-        ws.cell(r, 12, planned).number_format = "YYYY-MM-DD"
-        ws.cell(r, 13, 2)
-        if actual is not None:
-            ws.cell(r, 14, actual).number_format = "YYYY-MM-DD"
-        ws.cell(r, 15, 1)
-        ws.cell(r, 16, 1.5)
-    n = len(ROWS)
-    end_r = data_row0 + n
-
-    chart = ScatterChart()
-    chart.title = "PAB 目标轴（蓝）与实际轴（橙）"
-    chart.x_axis.title = "完成节点"
-    chart.y_axis.title = None
-    chart.y_axis.scaling.min = 0.5
-    chart.y_axis.scaling.max = 2.5
-    chart.y_axis.delete = True
-    chart.style = 10
-    chart.height = 9
-    chart.width = 22
-    chart.legend.position = "b"
-
-    x_planned = Reference(ws, min_col=12, min_row=data_row0 + 1, max_row=end_r)
-    y_planned = Reference(ws, min_col=13, min_row=data_row0, max_row=end_r)
-    s_planned = Series(y_planned, x_planned, title="目标时间轴")
-    s_planned.marker = Marker(symbol="diamond", size=8)
-    s_planned.graphicalProperties = GraphicalProperties(ln=LineProperties(prstDash="solid", w=12000, solidFill="1F4E78"))
-    chart.series.append(s_planned)
-
-    x_actual = Reference(ws, min_col=14, min_row=data_row0 + 1, max_row=end_r)
-    y_actual = Reference(ws, min_col=15, min_row=data_row0, max_row=end_r)
-    s_actual = Series(y_actual, x_actual, title="实际时间轴")
-    s_actual.marker = Marker(symbol="circle", size=8)
-    s_actual.graphicalProperties = GraphicalProperties(ln=LineProperties(prstDash="dash", w=10000, solidFill="C2410C"))
-    chart.series.append(s_actual)
-
-    x_axis_line = Reference(ws, min_col=12, min_row=data_row0 + 1, max_row=end_r)
-    y_axis_line = Reference(ws, min_col=16, min_row=data_row0, max_row=end_r)
-    s_axis = Series(y_axis_line, x_axis_line, title="时间方向 →")
-    s_axis.marker = Marker(symbol="none")
-    s_axis.graphicalProperties = GraphicalProperties(ln=LineProperties(solidFill="94A3B8", w=8000))
-    chart.series.append(s_axis)
-
-    chart.anchor = f"A{start_row + 3}"
-    ws.add_chart(chart)
-    for col in range(11, 17):
-        ws.column_dimensions[get_column_letter(col)].hidden = True
-
-    _ = (DateAxis, SeriesLabel, last_data_row)
 
 
 if __name__ == "__main__":
