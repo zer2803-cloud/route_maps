@@ -123,10 +123,11 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     first_bar = str(ws.cell(last_task_row, 7).value)
     last_bar = str(ws.cell(last_task_row, 6 + len(dates)).value)
     assert first_bar.startswith("=")
-    assert "CHAR(9608)" in first_bar
+    assert '"#"' in first_bar
+    assert "CHAR(" not in first_bar
     assert "$D" in first_bar
     assert "N(G$2)" in first_bar
-    assert "CHAR(9608)" in last_bar
+    assert '"#"' in last_bar
     assert "$D" in last_bar
     actual_bar = str(ws.cell(last_task_row + 1, 7).value)
     assert actual_bar.startswith("=")

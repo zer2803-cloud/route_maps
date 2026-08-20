@@ -441,11 +441,15 @@ def _main_ref(cell: str) -> str:
 
 
 def _bar_formula(row: int, col: int, end_col: str) -> str:
-    """Show a block if this calendar day is on or before the finish date."""
+    """Mark this day if it is on or before the finish date.
+
+    Use a plain ASCII mark, not CHAR(9608): CHAR() only accepts 1–255 and
+    otherwise shows #VALUE! (值错误) / garbled text in Excel and WPS.
+    """
     letter = get_column_letter(col)
     return (
         f'=IF(AND(ISNUMBER(${end_col}{row}),'
-        f"N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),CHAR(9608),\"\")"
+        f'N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),"#","")'
     )
 
 
