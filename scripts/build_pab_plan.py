@@ -472,8 +472,22 @@ def _add_merged_bar(ws, row: int, start: date, finish: date, fill, value: str, f
     top.number_format = DATE_FORMAT
 
 
+def _actual_bar_formula(row: int, col: int) -> str:
+    """Paint from project start to the actual finish day after E is filled.
+
+    The finish-day cell shows the completion date; earlier bar cells hold a
+    space so conditional formatting can apply fill. Excel cannot merge cells
+    dynamically, so actual bars stay formula-driven.
+    """
+    letter = get_column_letter(col)
+    return (
+        f'=IF(AND(COUNT($E{row}),N({letter}$2)=N($E{row})),$E{row},'
+        f'IF(AND(COUNT($E{row}),N({letter}$2)>=N($G$2),N({letter}$2)<N($E{row}))," ",""))'
+    )
+
+
 def _add_gantt_sheet(wb) -> None:
-    """Calendar-day Gantt; each day cell formula draws the bar so it shows in WPS/Excel."""
+    """Calendar-day Gantt: planned bars are merged; actual bars follow filled dates."""
     ws = wb.create_sheet("甘特图")
     days = _calendar_days()
     start, end = days[0], days[-1]
@@ -505,7 +519,8 @@ def _add_gantt_sheet(wb) -> None:
         1,
         1,
         f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天）。"
-        "每行从首日合并到完成日，色条内只显示最终完成日期。请在「时间节点计划表」填写日期。",
+        "每行从首日合并到完成日（预估）；填写实际日期后自动生成实际色条。"
+        "请在「时间节点计划表」填写日期。",
     )
     title.font = Font(name="微软雅黑", bold=True, size=11, color="1F4E78")
     title.alignment = left
@@ -574,24 +589,26 @@ def _add_gantt_sheet(wb) -> None:
                     cell.fill = alt_label
             for idx in range(len(days)):
                 ws.cell(row, DAY_COL_START + idx).border = thin
-            finish = planned if kind == "预估" else actual
-            if finish is not None:
-                fill = planned_fill if kind == "预估" else actual_fill
-                if kind == "实际" and actual is not None:
-                    if actual > planned:
-                        fill = delay_fill
-                    elif actual < planned:
-                        fill = early_fill
-                value = f"=D{row}" if kind == "预估" else f"=E{row}"
-                _add_merged_bar(ws, row, start, finish, fill, value, dark_font, thin, center)
+            if kind == "预估":
+                _add_merged_bar(
+                    ws, row, start, planned, planned_fill, f"=D{row}", dark_font, thin, center
+                )
+            else:
+                for idx in range(len(days)):
+                    col = DAY_COL_START + idx
+                    cell = ws.cell(row, col, _actual_bar_formula(row, col))
+                    cell.border = thin
+                    cell.alignment = center
+                    cell.font = dark_font
+                    cell.number_format = DATE_FORMAT
             ws.row_dimensions[row].height = 20
             row += 1
 
     bar_range = f"G3:{last_col_letter}{last_gantt_row}"
     planned_formula = 'AND($A3="预估",ISNUMBER(G3))'
-    ontime_formula = 'AND($A3="实际",ISNUMBER(G3),$E3=$D3)'
-    delay_formula = 'AND($A3="实际",ISNUMBER(G3),$E3>$D3)'
-    early_formula = 'AND($A3="实际",ISNUMBER(G3),$E3<$D3)'
+    ontime_formula = 'AND($A3="实际",G3<>"",$E3=$D3)'
+    delay_formula = 'AND($A3="实际",G3<>"",$E3>$D3)'
+    early_formula = 'AND($A3="实际",G3<>"",$E3<$D3)'
     ws.conditional_formatting.add(
         bar_range, FormulaRule(formula=[planned_formula], fill=planned_fill, font=dark_font)
     )
@@ -610,8 +627,9 @@ def _add_gantt_sheet(wb) -> None:
     legend = ws.cell(
         legend_row,
         1,
-        "色条从项目首日合并到完成日，格内只显示最终完成日期。"
-        "蓝=预估；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
+        "预估条从首日合并到完成日，只显示最终完成日期。"
+        "填写实际日期后自动生成实际色条（完成日显示日期，中间格铺底纹）。"
+        "蓝=预估；橙/红/绿=实际（准时/延期/提前）。",
     )
     legend.font = Font(name="微软雅黑", size=9, color="6B7280")
     legend.alignment = Alignment(wrap_text=True, vertical="center")

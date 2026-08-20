@@ -134,7 +134,14 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     assert ws.cell(last_task_row, 7).number_format.lower() == DATE_FORMAT
     actual_row = last_task_row + 1
     assert f"G{actual_row}:{last_letter}{actual_row}" not in merged
-    assert ws.cell(actual_row, 7).value in (None, "")
+    actual_first = str(ws.cell(actual_row, 7).value)
+    actual_last = str(ws.cell(actual_row, last_col).value)
+    assert actual_first.startswith("=")
+    assert "$E" in actual_first
+    assert "COUNT($E" in actual_first
+    assert "N(G$2)" in actual_first
+    assert actual_last.startswith("=")
+    assert "$E" in actual_last
     formulas = []
     font_rgbs = []
     for cf_range in ws.conditional_formatting._cf_rules:
@@ -145,7 +152,7 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
             if rgb:
                 font_rgbs.append(str(rgb).upper())
     assert any("ISNUMBER(G3)" in formula and "预估" in formula for formula in formulas)
-    assert any("ISNUMBER(G3)" in formula and "实际" in formula for formula in formulas)
+    assert any('G3<>""' in formula and "实际" in formula for formula in formulas)
     assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
     assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
 
