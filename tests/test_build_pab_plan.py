@@ -97,7 +97,7 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     ws = wb["甘特图"]
     # Header row 2 contains consecutive calendar dates.
     start = _cell_date(ws.cell(2, 7).value)
-    assert start == date(2026, 8, 24)
+    assert start == date(2026, 8, 20)
     dates = []
     col = 7
     while True:
@@ -154,7 +154,7 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     assert any("ISNUMBER(G3)" in formula and "预估" in formula for formula in formulas)
     assert any('G3<>""' in formula and "实际" in formula for formula in formulas)
     assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
-    assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
+    assert (date(2026, 10, 23) - date(2026, 8, 20)).days + 1 == len(dates)
 
 
 def test_main_sheet_points_to_gantt(tmp_path: Path) -> None:

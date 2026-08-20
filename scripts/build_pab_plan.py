@@ -423,12 +423,13 @@ def _thin_border() -> Border:
 
 DAY_COL_START = 7  # Gantt calendar days begin at column G.
 DATE_FORMAT = "yyyy-mm-dd"
+GANTT_AXIS_START = date(2026, 8, 20)
 
 
 def _calendar_range() -> tuple[date, date]:
     dates = [row[2] for row in ROWS]
     dates.extend(row[3] for row in ROWS if row[3] is not None)
-    return min(dates), max(dates)
+    return min(GANTT_AXIS_START, min(dates)), max(dates)
 
 
 def _calendar_days() -> list[date]:
