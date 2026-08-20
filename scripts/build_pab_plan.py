@@ -440,16 +440,17 @@ def _main_ref(cell: str) -> str:
     return f"'时间节点计划表'!{cell}"
 
 
-def _bar_formula(row: int, col: int, end_col: str) -> str:
-    """Mark this day if it is on or before the finish date.
+def _solid_fill(rgb: str) -> PatternFill:
+    color = rgb if len(rgb) == 8 else f"FF{rgb}"
+    return PatternFill(start_color=color, end_color=color, fill_type="solid")
 
-    Use a plain ASCII mark, not CHAR(9608): CHAR() only accepts 1–255 and
-    otherwise shows #VALUE! (值错误) / garbled text in Excel and WPS.
-    """
+
+def _bar_formula(row: int, col: int, end_col: str) -> str:
+    """Return this column's date when it falls on the bar (start through finish)."""
     letter = get_column_letter(col)
     return (
-        f'=IF(AND(ISNUMBER(${end_col}{row}),'
-        f'N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),"#","")'
+        f"=IF(AND(ISNUMBER(${end_col}{row}),"
+        f"N({letter}$2)>=N($G$2),N({letter}$2)<=N(${end_col}{row})),{letter}$2,\"\")"
     )
 
 
@@ -473,14 +474,14 @@ def _add_gantt_sheet(wb) -> None:
     early_bar = "16A34A"
     alt_label = PatternFill("solid", fgColor="F8FAFC")
     body_font = Font(name="微软雅黑", size=9, color="1F2937")
-    planned_fill = PatternFill("solid", fgColor=planned_bar)
-    actual_fill = PatternFill("solid", fgColor=actual_bar)
-    delay_fill = PatternFill("solid", fgColor=delay_bar)
-    early_fill = PatternFill("solid", fgColor=early_bar)
-    planned_cell_fill = PatternFill("solid", fgColor="D6EAF8")
-    delay_cell_fill = PatternFill("solid", fgColor="FECACA")
-    early_cell_fill = PatternFill("solid", fgColor="BBF7D0")
-    ontime_cell_fill = PatternFill("solid", fgColor="FDE68A")
+    planned_fill = _solid_fill("9DC3E6")
+    actual_fill = _solid_fill("F8CBAD")
+    delay_fill = _solid_fill("F4A6A6")
+    early_fill = _solid_fill("A9D08E")
+    planned_cell_fill = _solid_fill("D6EAF8")
+    delay_cell_fill = _solid_fill("FECACA")
+    early_cell_fill = _solid_fill("BBF7D0")
+    ontime_cell_fill = _solid_fill("FDE68A")
     dark_font = Font(name="微软雅黑", size=9, color="1F2937")
     delay_font = Font(name="微软雅黑", size=9, color="991B1B", bold=True)
     early_font = Font(name="微软雅黑", size=9, color="14532D")
@@ -490,7 +491,7 @@ def _add_gantt_sheet(wb) -> None:
         1,
         1,
         f"PAB 甘特图（{start.isoformat()} → {end.isoformat()}，每格 1 天）。"
-        "色条由单元格公式生成：在「时间节点计划表」填写预估/实际日期后自动出现，无需手工涂色。",
+        "色条格子显示该日日期，并从首日铺底纹到完成日。请在「时间节点计划表」填写日期。",
     )
     title.font = Font(name="微软雅黑", bold=True, size=11, color="1F4E78")
     title.alignment = left
@@ -525,12 +526,12 @@ def _add_gantt_sheet(wb) -> None:
     for idx, day in enumerate(days):
         col = DAY_COL_START + idx
         cell = ws.cell(2, col, day)
-        cell.number_format = "d"
+        cell.number_format = DATE_FORMAT
         cell.font = Font(name="微软雅黑", size=7, color="FFFFFF" if day.weekday() < 5 else "FDE68A")
         cell.fill = header_fill if day.weekday() < 5 else PatternFill("solid", fgColor="334155")
         cell.alignment = center
         cell.border = thin
-        ws.column_dimensions[get_column_letter(col)].width = 3.0
+        ws.column_dimensions[get_column_letter(col)].width = 11
     ws.row_dimensions[2].height = 18
 
     for idx, width in enumerate((8, 8, 22, 14, 14, 10), start=1):
@@ -557,27 +558,35 @@ def _add_gantt_sheet(wb) -> None:
                     cell.number_format = "0"
                 if row % 2 == 0:
                     cell.fill = alt_label
-            planned_font = Font(name="微软雅黑", size=10, color=planned_bar, bold=True)
-            actual_font = Font(name="微软雅黑", size=10, color=actual_bar, bold=True)
+            date_font = Font(name="微软雅黑", size=8, color="1F2937")
             end_col = "D" if kind == "预估" else "E"
             for idx in range(len(days)):
                 col = DAY_COL_START + idx
                 cell = ws.cell(row, col, _bar_formula(row, col, end_col))
                 cell.border = thin
                 cell.alignment = center
-                cell.font = planned_font if kind == "预估" else actual_font
-            ws.row_dimensions[row].height = 18
+                cell.font = date_font
+                cell.number_format = DATE_FORMAT
+            ws.row_dimensions[row].height = 20
             row += 1
 
     bar_range = f"G3:{last_col_letter}{last_gantt_row}"
-    planned_formula = 'AND($A3="预估",G3<>"")'
-    ontime_formula = 'AND($A3="实际",G3<>"",$E3=$D3)'
-    delay_formula = 'AND($A3="实际",G3<>"",$E3>$D3)'
-    early_formula = 'AND($A3="实际",G3<>"",$E3<$D3)'
-    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[planned_formula], fill=planned_fill))
-    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[ontime_formula], fill=actual_fill))
-    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[delay_formula], fill=delay_fill))
-    ws.conditional_formatting.add(bar_range, FormulaRule(formula=[early_formula], fill=early_fill))
+    planned_formula = 'AND($A3="预估",ISNUMBER(G3))'
+    ontime_formula = 'AND($A3="实际",ISNUMBER(G3),$E3=$D3)'
+    delay_formula = 'AND($A3="实际",ISNUMBER(G3),$E3>$D3)'
+    early_formula = 'AND($A3="实际",ISNUMBER(G3),$E3<$D3)'
+    ws.conditional_formatting.add(
+        bar_range, FormulaRule(formula=[planned_formula], fill=planned_fill, font=dark_font)
+    )
+    ws.conditional_formatting.add(
+        bar_range, FormulaRule(formula=[ontime_formula], fill=actual_fill, font=dark_font)
+    )
+    ws.conditional_formatting.add(
+        bar_range, FormulaRule(formula=[delay_formula], fill=delay_fill, font=delay_font)
+    )
+    ws.conditional_formatting.add(
+        bar_range, FormulaRule(formula=[early_formula], fill=early_fill, font=early_font)
+    )
 
     # Date/label cells keep dark text; only light fills (never white font).
     type_range = f"A3:A{last_gantt_row}"
@@ -627,8 +636,8 @@ def _add_gantt_sheet(wb) -> None:
     legend = ws.cell(
         legend_row,
         1,
-        "用法：在主表填写日期即可，本表色条由公式自动画出，不要手工涂格子。"
-        "蓝条=预估（项目首日→预估完成日）；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
+        "色条从项目首日铺底纹到完成日，格子里显示该日日期（yyyy-mm-dd）。"
+        "蓝=预估；橙/红/绿=实际（准时/延期/提前）。实际未填时无色条。",
     )
     legend.font = Font(name="微软雅黑", size=9, color="6B7280")
     legend.alignment = Alignment(wrap_text=True, vertical="center")

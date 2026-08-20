@@ -123,12 +123,14 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
     first_bar = str(ws.cell(last_task_row, 7).value)
     last_bar = str(ws.cell(last_task_row, 6 + len(dates)).value)
     assert first_bar.startswith("=")
-    assert '"#"' in first_bar
+    assert '"#"' not in first_bar
     assert "CHAR(" not in first_bar
     assert "$D" in first_bar
     assert "N(G$2)" in first_bar
-    assert '"#"' in last_bar
+    assert first_bar.endswith('G$2,"")')
     assert "$D" in last_bar
+    assert last_bar.endswith('$2,"")')
+    assert ws.cell(last_task_row, 7).number_format.lower() == DATE_FORMAT
     actual_bar = str(ws.cell(last_task_row + 1, 7).value)
     assert actual_bar.startswith("=")
     assert "$E" in actual_bar
@@ -141,8 +143,8 @@ def test_gantt_sheet_uses_calendar_day_bars(tmp_path: Path) -> None:
             rgb = getattr(color, "rgb", None) if color is not None else None
             if rgb:
                 font_rgbs.append(str(rgb).upper())
-    assert any('G3<>""' in formula and "预估" in formula for formula in formulas)
-    assert any('G3<>""' in formula and "实际" in formula for formula in formulas)
+    assert any("ISNUMBER(G3)" in formula and "预估" in formula for formula in formulas)
+    assert any("ISNUMBER(G3)" in formula and "实际" in formula for formula in formulas)
     assert all(not rgb.endswith("FFFFFF") for rgb in font_rgbs)
     assert (date(2026, 10, 23) - date(2026, 8, 24)).days + 1 == len(dates)
 
